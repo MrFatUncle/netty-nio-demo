@@ -12,13 +12,13 @@ import java.io.InputStream;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.nio.channels.SelectionKey;
-import java.nio.channels.Selector;
-import java.nio.channels.ServerSocketChannel;
+import java.nio.ByteBuffer;
+import java.nio.channels.*;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoField;
 import java.time.temporal.TemporalField;
+import java.util.Iterator;
 import java.util.Set;
 
 public class NIOSocketDemo {
@@ -28,43 +28,56 @@ public class NIOSocketDemo {
     private static class NIOServer {
 
         public static void main(String[] args) {
-            Selector selector = null;
+            Selector serverSelector = null;
+            Selector clientSelector = null;
             ServerSocketChannel channel = null;
             try {
                 //开启Selector
-                selector = Selector.open();
+                serverSelector = Selector.open();
+                clientSelector = Selector.open();
                 //开启ServerSocketChannel（并绑定端口）、设置非阻塞、将channel注册到selector上
                 channel = ServerSocketChannel.open();
                 channel.socket().bind(new InetSocketAddress(8080));
                 channel.configureBlocking(false);
-                channel.register(selector, SelectionKey.OP_ACCEPT);
+                channel.register(serverSelector, SelectionKey.OP_ACCEPT);
 
                 //Selector判断有无连接
-                while (selector.select(1000) > 0) {
-                    //有连接，则看selector有多少个连接，遍历连接，并看连接对应的Accessable、Readable、Writable等是否有效
-                    Set<SelectionKey> selectionKeys = selector.selectedKeys();
+                while (true) {
+                    if (serverSelector.select(500) < 1) {
+                        continue;
+                    }
 
-                    while (selectionKeys.iterator().hasNext()) {
-                        SelectionKey key = selectionKeys.iterator().next();
+                    //有连接，则看selector有多少个连接，遍历连接，并看连接对应的Accessable、Readable、Writable等是否有效
+                    Set<SelectionKey> selectionKeys = serverSelector.selectedKeys();
+                    Iterator<SelectionKey> iterator = selectionKeys.iterator();
+                    while (iterator.hasNext()) {
+                        SelectionKey key = iterator.next();
 
                         if(key.isAcceptable()) {
                             //将SocketChannel注册到Selector上去
+                            accept(key);
                         }
                         if(key.isReadable()) {
                             //读数据
+                            read(key);
                         }
-                        if(key.isWritable()) {
+                        if(key.isValid() && key.isWritable()) {
                             //写数据
                         }
+                        iterator.remove();
                     }
+
                 }
             } catch (IOException e) {
                 e.printStackTrace();
             } finally {
 
                 try {
-                    if (selector != null) {
-                        selector.close();
+                    if (serverSelector != null) {
+                        serverSelector.close();
+                    }
+                    if (clientSelector != null) {
+                        clientSelector.close();
                     }
                     if (channel != null) {
                         channel.close();
@@ -74,6 +87,28 @@ public class NIOSocketDemo {
                 }
 
             }
+        }
+
+        private static void read(SelectionKey key) throws IOException {
+            ByteBuffer buffer = ByteBuffer.allocate(1024);
+            SocketChannel channel = (SocketChannel) key.channel();
+            while(channel.read(buffer) > 0) {
+                buffer.flip();
+                while(buffer.hasRemaining()) {
+                    byte[] b = new byte[buffer.limit()];
+                    buffer.get(b);
+                    System.out.println(new String(b));
+                }
+                buffer.compact();
+            }
+            channel.close();
+        }
+
+        private static void accept(SelectionKey key) throws IOException {
+            ServerSocketChannel channel = (ServerSocketChannel)key.channel();
+            SocketChannel socketChannel = channel.accept();
+            socketChannel.configureBlocking(false);
+            socketChannel.register(key.selector(), SelectionKey.OP_READ);
         }
 
     }
@@ -133,8 +168,17 @@ class IOSocketDemo {
             try {
                 socket = new Socket("127.0.0.1", 8080);
 
-                socket.getOutputStream().write(("now mills is:" + Instant.now().get(ChronoField.NANO_OF_SECOND)).getBytes());
+                socket.getOutputStream().write(("now mills is:" + Instant.now().toEpochMilli()).getBytes());
+
+                Thread.sleep(2000);
+//
+                socket.getOutputStream().write(("now mills is:" + Instant.now().toEpochMilli()).getBytes());
+
+                System.out.println(1);
+
             } catch (IOException e) {
+                e.printStackTrace();
+            } catch (InterruptedException e) {
                 e.printStackTrace();
             } finally {
                 if (socket != null) {
